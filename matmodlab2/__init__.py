@@ -21,6 +21,7 @@ __all__ = [
     "MooneyRivlinMaterial",
     "NeoHookeMaterial",
     "TrescaMaterial",
+    "ST_GPSR_TTM",
     "UMat",
     "UHyper",
     "read_db",
