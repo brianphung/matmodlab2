@@ -956,7 +956,7 @@ class MaterialPointSimulator(object):
         # v array is an array of integers that contains the rows and columns of
         # the slice needed in the jacobian subroutine.
         nv = 0
-        v = np.zeros(6, dtype=np.int)
+        v = np.zeros(6, dtype=int)
         for (i, cij) in enumerate(components):
             descriptor = descriptors[i]
             if descriptor == "DE":  # -- strain rate

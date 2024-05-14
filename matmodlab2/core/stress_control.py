@@ -192,7 +192,7 @@ def newton(
     depsmag = lambda a: np.sqrt(sum(a[:3] ** 2) + 2.0 * sum(a[3:] ** 2)) * dt
 
     # Initialize
-    eps = np.finfo(np.float).eps
+    eps = np.finfo(float).eps
     tol1, tol2 = eps, np.sqrt(eps)
     maxit1, maxit2, depsmax = 20, 30, 0.2
 
