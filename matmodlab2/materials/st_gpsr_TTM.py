@@ -23,11 +23,14 @@ class ST_GPSR_TTM(Material):
             unused = ", ".join(parameters.keys())
             logger.warning("Unused parameters: {0}".format(unused))
 
+        self.params["H"] = 1.0
+
         # Check inputs
         E = self.params["E"]
         Nu = self.params["Nu"]
         Y0 = self.params["Y0"]
         B = self.params["B"]
+        H = self.params["H"]
         errors = 0
         if E <= 0.0:
             errors += 1
@@ -47,9 +50,9 @@ class ST_GPSR_TTM(Material):
             # zero strength -> assume the user wants elasticity
             logger.warning("Zero strength detected, setting it to a larg number")
             self.params["Y0"] = 1e60
-        if isinstance(B, np.ndarray) == False:
+        if callable(B) == False:
             errors += 1
-            logger.error("No mapping matrix.")
+            logger.error("No mapping matrix as function.")
         if errors:
             raise ValueError("stopping due to previous errors")
 
@@ -73,14 +76,15 @@ class ST_GPSR_TTM(Material):
             "EP_XY",
             "EP_YZ",
             "EP_XZ",
-            "EQPS"
+            "EQPS",
+            "Y"
         ]
         self.num_sdv = len(self.sdv_names)
 
     def sdvini(self, statev):
         Y0 = self.params["Y0"]
         #return np.array([ 0.0, 0.0, 0.0, Y0, 0 ])
-        return np.array([ 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 ])
+        return np.array([ 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, Y0 ])
 
     # def apply_some_mapping_to_stress_vector(self, A_tensor, S_vector):
     #     S_tensor = matrix_rep(S_vector,0)
@@ -132,8 +136,9 @@ class ST_GPSR_TTM(Material):
     #     func = vm - Y
     #     return func
     
-    def vm_stress_mandell(self, mandel_stress_vec):
+    def vm_stress_mandell(self, mandel_stress_vec, eqps):
         Y = self.params["Y0"]
+        H = self.params["H"]
         # MML stress comes in the following order: 11, 22, 33, 12, 23, 13
         sigma_11, sigma_22, sigma_33, sigma_12, sigma_23, sigma_13 = mandel_stress_vec
         sigma_12 = sigma_12/ROOT2
@@ -141,7 +146,8 @@ class ST_GPSR_TTM(Material):
         sigma_13 = sigma_13/ROOT2
         internal = (sigma_11 - sigma_22)**2 + (sigma_22 - sigma_33)**2 + (sigma_33 - sigma_11)**2 + 6*(sigma_23**2 + sigma_13**2 + sigma_12**2)
         vm = np.sqrt(0.5*internal)
-        return vm - Y
+        Y_K = Y + H*eqps
+        return vm - Y_K
 
     def eval(self, time, dtime, temp, dtemp, F0, F, stran_V, d_V, stress_V, X, **kwargs):
         # First, we'll convert everything into mandel notation
@@ -162,6 +168,7 @@ class ST_GPSR_TTM(Material):
         Y = self.params["Y0"]
         E = self.params["E"]
         Nu = self.params["Nu"]
+        H = self.params["H"]
 
         # Get the bulk, shear, and Lame constants
         K = E / 3.0 / (1.0 - 2.0 * Nu)
@@ -194,22 +201,23 @@ class ST_GPSR_TTM(Material):
         e_p = np.array([0,0,0,0,0,0])
 
         # Transform the stress to a fictious isotropic space
-        A_in = self.params["B"]
+        trial_eqps = X[6]
+        A_in = self.params["B"](trial_eqps)
         if A_in.shape == (3,3):
             new_A = np.zeros((6,6))
             new_A[0:3, 0:3] = A_in
             new_A[3:, 3:] = np.eye(3)#*ROOT2 # Like the stuffness matrix, the shear comps are multiplied by ROOT2
             A_in = new_A
-        B_in = np.linalg.inv(A_in)
-
+        
         trial_Sigma_f = np.dot(A_in, trial_T)
+        
 
         #A_E = np.linalg.tensorinv(C) @ A_in @ C
 
         #print('&&&&&&&&&&&&&&&&&&&&&&&& BEGIN PLASTIC ITERATIONS &&&&&&&&&&&&&&&&&&&&&&&&')
         #print('PRE TRIAL STRESS: ', trial_Sigma_f)
 
-        if self.vm_stress_mandell(trial_Sigma_f) <= 0:
+        if self.vm_stress_mandell(trial_Sigma_f, trial_eqps) <= 0:
             pass
         else:
             for j in range(1000):
@@ -220,7 +228,7 @@ class ST_GPSR_TTM(Material):
                 #print(f'from E_p:', e_p)
 
                 # Calculate the yield function
-                yield_F = self.vm_stress_mandell(trial_Sigma_f)
+                yield_F = self.vm_stress_mandell(trial_Sigma_f, trial_eqps)
                 #print('Yield F', yield_F, 'Von Mises Stress:', yield_F + Y)
                 flow_direction = self.dGdSMandell(trial_Sigma_f)
                 #print('Flow dir: ', flow_direction)
@@ -233,6 +241,14 @@ class ST_GPSR_TTM(Material):
                 R_i = flow_direction 
                 #R_i[3:] = R_i[3:]/4.
                 delta_E_p = dGamma*R_i
+
+                # delta eqps
+                #print('H_R_i', R_i)
+                #print('full', np.full((6), H))
+                delta_eqps = dGamma * H
+                #print(delta_eqps)
+                trial_eqps += delta_eqps
+
                 #print('Delta E_p: ', dGamma)
                 e_p = e_p + delta_E_p
                 #print('New E_p: ', e_p)
@@ -246,7 +262,14 @@ class ST_GPSR_TTM(Material):
         #print('---------------- END PLASTIC ITERATIONS ----------------')
     
         # transform the stress back to real space
-        final_mandel_stress = np.dot(B_in, trial_Sigma_f)
+        A_new = self.params["B"](trial_eqps)
+        if A_new.shape == (3,3):
+            new_A = np.zeros((6,6))
+            new_A[0:3, 0:3] = A_new
+            new_A[3:, 3:] = np.eye(3)#*ROOT2 # Like the stuffness matrix, the shear comps are multiplied by ROOT2
+            A_new = new_A
+        B_new = np.linalg.inv(A_new)
+        final_mandel_stress = np.dot(B_new, trial_Sigma_f)
         # Transform mandel stress back to voigt
         stress = final_mandel_stress
         #print(stress)
@@ -259,8 +282,8 @@ class ST_GPSR_TTM(Material):
         X[:3] = e_p[:3]
         X[3:6] = e_p[3:6]/ROOT2*2
 
-        Epp = np.linalg.eigvals(matrix_rep(X[0:6], 0)) # Too lazy to find eqps equation for full strain tensor
-        X[6] += ROOT2/3.*np.sqrt( (Epp[0] - Epp[1])**2 + (Epp[1] - Epp[2])**2 + (Epp[2] - Epp[0])**2 )
+
+        X[6] = trial_eqps#+= ROOT2/3.*np.sqrt( (Epp[0] - Epp[1])**2 + (Epp[1] - Epp[2])**2 + (Epp[2] - Epp[0])**2 )
 
         return stress, X, None
     """
