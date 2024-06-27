@@ -15,7 +15,7 @@ class ST_GPSR_TTM(Material):
 
     def __init__(self, **parameters):
         """Set up the Plastic material"""
-        param_names = ["E", "Nu", "Y0", "H", "B"]
+        param_names = ["E", "Nu", "Y0", "Y1", "m", "B", "H"]
         self.params = {}
         for (i, name) in enumerate(param_names):
             self.params[name] = parameters.pop(name, 0.0)
@@ -92,51 +92,49 @@ class ST_GPSR_TTM(Material):
         #return np.array([ 0.0, 0.0, 0.0, Y0, 0 ])
         return np.array([ 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, Y0 ])
 
-    # def apply_some_mapping_to_stress_vector(self, A_tensor, S_vector):
-    #     S_tensor = matrix_rep(S_vector,0)
-    #     rot_tensor = np.tensordot(A_tensor, S_tensor)
-    #     return array_rep(rot_tensor, (6,))
     
-    # def dGdS(self, pk2_stress):
-    #     sigma_1, sigma_2, sigma_3, sigma_4, sigma_5, sigma_6 = array_rep(pk2_stress, (6,))
-    #     denom = sqrt(6*sigma_4**2 + 6*sigma_5**2 + 6*sigma_6**2 + (sigma_1 - sigma_2)**2 + (sigma_1 - sigma_3)**2 + (sigma_2 - sigma_3)**2)
-    #     dGds1 = ROOT2*(2*sigma_1 - sigma_2 - sigma_3)/(2*denom)
-    #     dGds2 = ROOT2*(-sigma_1 + 2*sigma_2 - sigma_3)/(2*denom)
-    #     dGds3 = ROOT2*(-sigma_1 - sigma_2 + 2*sigma_3)/(2*denom)
-    #     dGds4 = 3*ROOT2*sigma_4/denom
-    #     dGds5 = 3*ROOT2*sigma_5/denom
-    #     dGds6 = 3*ROOT2*sigma_6/denom
-    #     dGdS_array = np.array([dGds1, dGds2, dGds3, dGds4, dGds5, dGds6])
-    #     return matrix_rep(dGdS_array, 0)
-    
-    def dGdSMandell(self, mandell_stress_vector):
+    def dGdSMandell(self, mandell_stress_vector, Y_S):
         sigma_1, sigma_2, sigma_3, sigma_4, sigma_5, sigma_6 = mandell_stress_vector
         sigma_4 = sigma_4/ROOT2
         sigma_5 = sigma_5/ROOT2
         sigma_6 = sigma_6/ROOT2
-        denom = sqrt(6*sigma_4**2 + 6*sigma_5**2 + 6*sigma_6**2 + (sigma_1 - sigma_2)**2 + (sigma_1 - sigma_3)**2 + (sigma_2 - sigma_3)**2)
-        dGds1 = ROOT2*(2*sigma_1 - sigma_2 - sigma_3)/(2*denom)
-        dGds2 = ROOT2*(-sigma_1 + 2*sigma_2 - sigma_3)/(2*denom)
-        dGds3 = ROOT2*(-sigma_1 - sigma_2 + 2*sigma_3)/(2*denom)
-        dGds4 = 3*ROOT2*sigma_4/denom
-        dGds5 = 3*ROOT2*sigma_5/denom
-        dGds6 = 3*ROOT2*sigma_6/denom
+        
+        # This is from the Starman paper
+        dGdS_array = mandell_stress_vector / Y_S**2
+        kron = np.array([1,1,1, 0, 0, 0])
+        operator = 3*np.eye(6) - np.outer(kron, kron)
+        dGdS_array = dGdS_array @ operator
+
+        """ This is the explicitly derived version. 6/26/24 test von_mises_no_transformation
+        indicates that these are the same, but there is a discrepancy in the shear term
+        denom = Y_S**2
+        dGds1 =  (2*sigma_1 - sigma_2 - sigma_3)/(denom)
+        dGds2 = (-sigma_1 + 2*sigma_2 - sigma_3)/(denom)
+        dGds3 = (-sigma_1 - sigma_2 + 2*sigma_3)/(denom)
+        dGds4 = 6*sigma_4/denom
+        dGds5 = 6*sigma_5/denom
+        dGds6 = 6*sigma_6/denom
         dGdS_array = np.array([dGds1, dGds2, dGds3, dGds4, dGds5, dGds6])
-        dGdS_array[3:] = dGdS_array[3:]/ROOT2
+        dGdS_array[3:] = dGdS_array[3:]*ROOT2
+        """
         return dGdS_array
     
-    def vm_stress_mandell(self, mandel_stress_vec, eqps):
-        Y = self.params["Y0"]
-        H = self.params["H"]
+    
+
+    def vm_yield(self, mandell_stress_vec):
         # MML stress comes in the following order: 11, 22, 33, 12, 23, 13
-        sigma_11, sigma_22, sigma_33, sigma_12, sigma_23, sigma_13 = mandel_stress_vec
+        sigma_11, sigma_22, sigma_33, sigma_12, sigma_23, sigma_13 = mandell_stress_vec
         sigma_12 = sigma_12/ROOT2
         sigma_23 = sigma_23/ROOT2
         sigma_13 = sigma_13/ROOT2
-        internal = (sigma_11 - sigma_22)**2 + (sigma_22 - sigma_33)**2 + (sigma_33 - sigma_11)**2 + 3*(sigma_23**2 + sigma_13**2 + sigma_12**2)
+        internal = (sigma_11 - sigma_22)**2 + (sigma_22 - sigma_33)**2 + (sigma_33 - sigma_11)**2 + 6.*(sigma_23**2 + sigma_13**2 + sigma_12**2)
         vm = np.sqrt(0.5*internal)
-        Y_K = Y + H*eqps
-        return vm - Y_K
+        return vm
+    
+    def yield_func_mandell(self, mandell_stress_vec, sigma_Y):
+        vm = self.vm_yield(mandell_stress_vec)
+
+        return (vm/sigma_Y)**2 - 1
 
     def eval(self, time, dtime, temp, dtemp, F0, F, stran_V, d_V, stress_V, X, **kwargs):
         # First, we'll convert everything into mandel notation
@@ -154,37 +152,33 @@ class ST_GPSR_TTM(Material):
         e_p[3:] = ROOT2/2.*e_p[3:]
         # From here, we're working in a Mandell basis
 
-        Y = self.params["Y0"]
+        # Specify elastic constants
         E = self.params["E"]
         Nu = self.params["Nu"]
         H = self.params["H"]
-
         # Get the bulk, shear, and Lame constants
         K = E / 3.0 / (1.0 - 2.0 * Nu)
         G = E / 2.0 / (1.0 + Nu)
-
         K3 = 3.0 * K
         G2 = 2.0 * G
         Lam = (K3 - G2) / 3.0
         
         # elastic stiffness, in Mandell
-        C = np.zeros((6, 6))
-        C[np.ix_(range(3), range(3))] = Lam
-        C[range(3), range(3)] += G2
-        C[range(3, 6), range(3, 6)] = 2*G
-        C[3:6, 0:3] *= ROOT2
-        C[0:3, 3:6] *= ROOT2
+        C_real = np.zeros((6, 6))
+        C_real[np.ix_(range(3), range(3))] = Lam
+        C_real[range(3), range(3)] += G2
+        C_real[range(3, 6), range(3, 6)] = G2
+        C_real[3:6, 0:3] *= ROOT2
+        C_real[0:3, 3:6] *= ROOT2
 
-        # Evaluate predicted stress in the spatial basis
-
-        #delta_T = np.dot(C, d_strain) #Mandell stress vector delta
+        d_strain = delta_strain * dtime # Strain rate
+        delta_T = np.dot(C_real, d_strain) #Mandell stress vector delta
 
         # Calculate a trial stress
-        trial_T = np.dot(C, strain - e_p)
-        # Set the plastic strains
-        #e_p = np.array([0,0,0,0,0,0])
+        trial_T = stress + delta_T
 
-        trial_eqps = X[6]
+        # Transform the stress to a fictious isotropic space
+        isotropic_eqps = X[6]
         """ For now, force A to be the idenity
         A_in = self.params["B"](isotropic_eqps)
         if A_in.shape == (3,3):
@@ -196,52 +190,54 @@ class ST_GPSR_TTM(Material):
         A_in = np.eye(6)
         trial_Sigma_f = np.dot(A_in, trial_T)
 
+        trial_Y = self.params['Y0'] + self.params['H']*isotropic_eqps #X[14]
         delta_e_p = np.array([0,0,0,0,0,0], dtype=float)
         #print(delta_e_p)
 
-        if self.vm_stress_mandell(trial_Sigma_f, trial_eqps) <= 0:
+        if self.yield_func_mandell(trial_Sigma_f, trial_Y) <= 0:
             pass
         else:
-            for j in range(1000):
-                #print(f'---------- BEGIN J {j} ----------')
-                #print(f'Pre trial: {trial_Sigma_f}')
-                
-                
-                #trial_Sigma_f = trial_Sigma_f - np.dot(C, e_p) # We cut the strain because elastic isotropy and principal stresses
-                #print(f'New trial: {trial_Sigma_f}')
-                #print(f'from E_p:', e_p)
-
+            for k in range(1000):
                 # Calculate the yield function
-                yield_F = self.vm_stress_mandell(trial_Sigma_f, trial_eqps)
-                #print('Yield F', yield_F, 'Von Mises Stress:', yield_F + Y)
-                dGdSigma = self.dGdSMandell(trial_Sigma_f)
-                #print('Flow dir: ', flow_direction)
+                yield_F = self.yield_func_mandell(trial_Sigma_f, trial_Y)
+                #print('Yield F', yield_F, 'Trial Stress', trial_Sigma_f, 'Vm', self.vm_yield(trial_Sigma_f))
+                dPhidSigma = self.dGdSMandell(trial_Sigma_f, trial_Y)
 
-                v_C_r = dGdSigma @ C @ dGdSigma + H*np.linalg.norm(dGdSigma)
-                #print('v_c_r: ', v_C_r)
+                # "R" vector in the Starman paper
+                R1 = C_real @ dPhidSigma
+                R2 = -H/trial_Y * trial_Sigma_f @ dPhidSigma
 
-                dGamma = yield_F / v_C_r
+                dPhidYield = -2. * self.vm_yield(trial_Sigma_f)**2 / trial_Y**3
+                
+                # Find the plastic increment
+                delta_Gamma = yield_F / ( dPhidSigma @ R1 + dPhidYield*R2    )
 
-                delta_e_p = dGamma*dGdSigma
-                e_p = e_p + delta_e_p
-                trial_eqps = ROOT2/ROOT3*np.sqrt(e_p @ np.transpose(e_p))
-                #print('Delta E_p: ', dGamma)
-                #e_p = e_p + delta_e_p
-                #print('New E_p: ', e_p)
+                # Find new increment values
+                delta_e_p += dPhidSigma*delta_Gamma
+                delta_sigma = delta_Gamma*R1
+                trial_Sigma_f = trial_Sigma_f - delta_sigma
+                delta_trial_Y = delta_Gamma*R2
+                trial_Y = trial_Y - delta_trial_Y
 
-                trial_Sigma_f = np.dot(C, strain - e_p)
-                if abs(dGamma) <= TOLER:
+                yield_F = self.yield_func_mandell(trial_Sigma_f, trial_Y)
+
+                condition1 = yield_F <= TOLER
+                condition2 = np.abs(np.linalg.norm( delta_sigma )/np.linalg.norm(trial_Sigma_f))  <= TOLER
+                condition3 = np.abs(delta_trial_Y/trial_Y)  <= TOLER
+
+                if  condition2 == True and condition3 == True:
                     break
-                if (yield_F) < 0:
-                    print(yield_F)
-                    raise RuntimeError('Shouldnt he here')
+                # if (yield_F) < 0:
+                #     raise RuntimeError(f'Shouldnt he here, YF is {yield_F}')
+                
             else:
+                print(yield_F)
                 raise RuntimeError("Newton iterations failed to converge")
-        
-        #e_p = e_p + delta_e_p
-        #trial_Sigma_f = trial_Sigma_f - np.dot(C, e_p) # We cut the strain because elastic isotropy and principal stresses
-        eqps_iso = trial_eqps #ROOT2/ROOT3*np.sqrt(e_p @ np.transpose(e_p))
+
     
+        e_p = e_p + delta_e_p
+        eqps_iso = ROOT2/ROOT3*np.sqrt(e_p @ np.transpose(e_p))
+
         """ Temporary hide
         # transform the stress back to real space
         A_new = self.params["B"](eqps_iso)
@@ -254,6 +250,11 @@ class ST_GPSR_TTM(Material):
         """
         B_new = np.eye(6)
 
+        e_p_real = np.dot(B_new, e_p)
+        
+
+        eqps_real = ROOT2/ROOT3*np.sqrt(e_p_real @ np.transpose(e_p_real))
+
         final_mandel_stress = np.dot(B_new, trial_Sigma_f)
         # Transform mandel stress back to voigt
         stress = final_mandel_stress
@@ -261,14 +262,18 @@ class ST_GPSR_TTM(Material):
         stress[3:] = stress[3:]/ROOT2
         #print(stress)
         stress = np.array([ stress[i] for i in [0, 1, 2, 5, 3, 4] ])
-
+        
         # Update plastic strain
         e_p = np.array([ e_p[i] for i in [0, 1, 2, 5, 3, 4] ])
         X[:3] = e_p[:3]
         X[3:6] = e_p[3:6]/ROOT2*2
-
+        e_p_real = np.array([ e_p_real[i] for i in [0, 1, 2, 5, 3, 4] ])
+        X[7:10] = e_p[:3]
+        X[10:13] = e_p[3:6]/ROOT2*2
 
         X[6] = eqps_iso#+= ROOT2/3.*np.sqrt( (Epp[0] - Epp[1])**2 + (Epp[1] - Epp[2])**2 + (Epp[2] - Epp[0])**2 )
+        X[13] = eqps_real
+        X[14] = trial_Y
 
         return stress, X, None
     """
