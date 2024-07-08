@@ -22,6 +22,7 @@ __all__ = [
     "NeoHookeMaterial",
     "TrescaMaterial",
     "ST_GPSR_TTM",
+    "CPAPlasticity",
     "UMat",
     "UHyper",
     "read_db",

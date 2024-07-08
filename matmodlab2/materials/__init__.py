@@ -11,6 +11,7 @@ from .mooney_rivlin import MooneyRivlinMaterial
 from .tresca import TrescaMaterial
 from .neohooke import NeoHookeMaterial
 from .st_gpsr_TTM import ST_GPSR_TTM
+from .cutting_plane import CPAPlasticity
 
 
 __all__ = [
@@ -26,5 +27,6 @@ __all__ = [
     "MooneyRivlinMaterial",
     "NeoHookeMaterial",
     "TrescaMaterial",
-    "ST_GPSR_TTM"
+    "ST_GPSR_TTM",
+    "CPAPlasticity"
 ]

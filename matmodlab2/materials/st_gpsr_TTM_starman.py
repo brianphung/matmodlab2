@@ -83,7 +83,7 @@ class ST_GPSR_TTM(Material):
             "REAL_EP_YZ",  # 11
             "REAL_EP_XZ",  # 12
             "REAL_EQPS",   # 13
-            "Y"            # 14
+            "Y",           # 14
         ]
         self.num_sdv = len(self.sdv_names)
 
