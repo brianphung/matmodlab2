@@ -95,27 +95,50 @@ class ST_GPSR_TTM(Material):
             "TRIAL_STRESS_POST_TRANS_XX",
             "TRIAL_STRESS_POST_TRANS_YY",
             "TRIAL_STRESS_POST_TRANS_ZZ",
+            "TRIAL_STRESS_POST_TRANS_XY",
+            "TRIAL_STRESS_POST_TRANS_YZ",
+            "TRIAL_STRESS_POST_TRANS_XZ",
             "MML_STRESS_GUESS_XX",    
             "MML_STRESS_GUESS_YY", 
             "MML_STRESS_GUESS_ZZ", 
+            "MML_STRESS_GUESS_XY",    
+            "MML_STRESS_GUESS_YZ", 
+            "MML_STRESS_GUESS_XZ", 
             "TRIAL_STRESS_PRE_TRANS_XX",   
             "TRIAL_STRESS_PRE_TRANS_YY",   
             "TRIAL_STRESS_PRE_TRANS_ZZ",   
+            "TRIAL_STRESS_PRE_TRANS_XY",   
+            "TRIAL_STRESS_PRE_TRANS_YZ",   
+            "TRIAL_STRESS_PRE_TRANS_XZ",   
             "CONV_STRESS_ISO_XX", 
             "CONV_STRESS_ISO_YY", 
             "CONV_STRESS_ISO_ZZ", 
+            "CONV_STRESS_ISO_XY", 
+            "CONV_STRESS_ISO_YZ", 
+            "CONV_STRESS_ISO_XZ", 
             "FICT_EQPS_INPUT", 
             "DELTA_EXX", 
             "DELTA_EYY", 
             "DELTA_EZZ", 
+            "DELTA_EXY", 
+            "DELTA_EYZ", 
+            "DELTA_EXZ", 
             'DELTA_SXX',
             'DELTA_SYY',
             'DELTA_SZZ',
+            'DELTA_SXY',
+            'DELTA_SYZ',
+            'DELTA_SXZ'
         ]
         self.SDV = {}
         for i, names in enumerate(self.sdv_names):
             self.SDV[names] = i
         self.num_sdv = len(self.sdv_names)
+        #print(self.num_sdv)
+
+
+        self.full_sdv_storage = []
+        self.cutting_plane_history = []
 
     def sdvini(self, statev):
         #return np.array([ 0.0, 0.0, 0.0, Y0, 0 ])
@@ -191,9 +214,12 @@ class ST_GPSR_TTM(Material):
         e_p_iso = np.array([X[ss] for ss in range(0,6)]) # e_p will also be in voigt notation
         e_p_iso[3:] = ROOT2/2.*e_p_iso[3:]
         # From here, we're working in a Mandell basis
-        X[self.SDV['MML_STRESS_GUESS_XX']] = stress[0]
-        X[self.SDV['MML_STRESS_GUESS_YY']] = stress[1]
-        X[self.SDV['MML_STRESS_GUESS_ZZ']] = stress[2]
+        X[self.SDV['MML_STRESS_GUESS_XX']] = stress_V[0]
+        X[self.SDV['MML_STRESS_GUESS_YY']] = stress_V[1]
+        X[self.SDV['MML_STRESS_GUESS_ZZ']] = stress_V[2]
+        X[self.SDV['MML_STRESS_GUESS_XY']] = stress_V[3]
+        X[self.SDV['MML_STRESS_GUESS_YZ']] = stress_V[4]
+        X[self.SDV['MML_STRESS_GUESS_XZ']] = stress_V[5]
 
         Y = self.params["Y0"]
         E = self.params["E"]
@@ -225,14 +251,23 @@ class ST_GPSR_TTM(Material):
         X[self.SDV['DELTA_EXX']] = delta_strain[0]*dtime
         X[self.SDV['DELTA_EYY']] = delta_strain[1]*dtime
         X[self.SDV['DELTA_EZZ']] = delta_strain[2]*dtime
+        X[self.SDV['DELTA_EXY']] = delta_strain[5]*dtime
+        X[self.SDV['DELTA_EYZ']] = delta_strain[3]*dtime
+        X[self.SDV['DELTA_EXZ']] = delta_strain[4]*dtime
         delta_stress = np.dot(C, delta_strain*dtime)
         trial_T = stress + np.dot(C, delta_strain*dtime)#np.dot(C, strain - e_p_real)
         X[self.SDV['DELTA_SXX']] = delta_stress[0]
         X[self.SDV['DELTA_SYY']] = delta_stress[1]
         X[self.SDV['DELTA_SZZ']] = delta_stress[2]
+        X[self.SDV['DELTA_SXY']] = delta_stress[5]
+        X[self.SDV['DELTA_SYZ']] = delta_stress[3]
+        X[self.SDV['DELTA_SXZ']] = delta_stress[4]
         X[self.SDV['TRIAL_STRESS_PRE_TRANS_XX']] = trial_T[0]
         X[self.SDV['TRIAL_STRESS_PRE_TRANS_YY']] = trial_T[1]
         X[self.SDV['TRIAL_STRESS_PRE_TRANS_ZZ']] = trial_T[2]
+        X[self.SDV['TRIAL_STRESS_PRE_TRANS_XY']] = trial_T[5]
+        X[self.SDV['TRIAL_STRESS_PRE_TRANS_YZ']] = trial_T[3]
+        X[self.SDV['TRIAL_STRESS_PRE_TRANS_XZ']] = trial_T[4]
         trial_iso_eqps = X[6]
         """ For now, force A to be the idenity """
 
@@ -241,7 +276,7 @@ class ST_GPSR_TTM(Material):
         if A_in.shape == (3,3):
             new_A = np.zeros((6,6))
             new_A[0:3, 0:3] = A_in
-            new_A[3:, 3:] = np.eye(3)#*ROOT2 # Like the stuffness matrix, the shear comps are multiplied by ROOT2
+            new_A[3:, 3:] = np.eye(3)*ROOT2 # Like the stuffness matrix, the shear comps are multiplied by ROOT2
             A_in = new_A
 
 
@@ -254,6 +289,11 @@ class ST_GPSR_TTM(Material):
         X[self.SDV['TRIAL_STRESS_POST_TRANS_XX']] = trial_Sigma_f[0]
         X[self.SDV['TRIAL_STRESS_POST_TRANS_YY']] = trial_Sigma_f[1]
         X[self.SDV['TRIAL_STRESS_POST_TRANS_ZZ']] = trial_Sigma_f[2]
+        X[self.SDV['TRIAL_STRESS_POST_TRANS_XY']] = trial_Sigma_f[5]
+        X[self.SDV['TRIAL_STRESS_POST_TRANS_YZ']] = trial_Sigma_f[3]
+        X[self.SDV['TRIAL_STRESS_POST_TRANS_XZ']] = trial_Sigma_f[4]
+
+        cutting_plane_history = []
 
         if self.yield_function_mandell(trial_Sigma_f, trial_iso_eqps) <= 0:
             pass
@@ -267,6 +307,8 @@ class ST_GPSR_TTM(Material):
                 #print(f'New trial: {trial_Sigma_f}')
                 #print(f'from E_p:', e_p)
                 trial_Sigma_f = np.dot(C, iso_strain - e_p_iso)
+
+                
 
                 # Calculate the yield function
                 yield_F = self.yield_function_mandell(trial_Sigma_f, trial_iso_eqps)
@@ -286,6 +328,8 @@ class ST_GPSR_TTM(Material):
                 #e_p = e_p + delta_e_p
                 #print('New E_p: ', e_p)
 
+                local_cpa_variables = np.hstack([trial_Sigma_f, [yield_F], dGdSigma, dGdSigma @ C @ dGdSigma, [dGamma], delta_e_p, e_p_iso, [trial_iso_eqps] ])
+                cutting_plane_history.append(local_cpa_variables)
                 
                 if abs(dGamma) <= TOLER:
                     break
@@ -300,6 +344,9 @@ class ST_GPSR_TTM(Material):
         X[self.SDV['CONV_STRESS_ISO_XX']] = trial_Sigma_f[0]
         X[self.SDV['CONV_STRESS_ISO_YY']] = trial_Sigma_f[1]
         X[self.SDV['CONV_STRESS_ISO_ZZ']] = trial_Sigma_f[2]
+        X[self.SDV['CONV_STRESS_ISO_XY']] = trial_Sigma_f[5]
+        X[self.SDV['CONV_STRESS_ISO_YZ']] = trial_Sigma_f[3]
+        X[self.SDV['CONV_STRESS_ISO_XZ']] = trial_Sigma_f[4]
         """ Temporary hide """
         # transform the stress back to real space
         A_new = self.params["B"](trial_iso_eqps)
@@ -310,7 +357,9 @@ class ST_GPSR_TTM(Material):
             A_new = new_A
         A_E_new = np.linalg.inv(C) @ A_new @ C
         #print(A_new - A_E_new)
+        
         B_new = np.linalg.inv(A_new)
+        #print(B_new)
         B_E_new = np.linalg.inv(A_E_new)
 
         #trial_Sigma_f = np.dot(C, iso_strain - e_p_iso)
@@ -344,4 +393,12 @@ class ST_GPSR_TTM(Material):
         X[6] = trial_iso_eqps #+= ROOT2/3.*np.sqrt( (Epp[0] - Epp[1])**2 + (Epp[1] - Epp[2])**2 + (Epp[2] - Epp[0])**2 )
         X[13] = real_eqps
         X[14] = Y + trial_iso_eqps*H
+
+        sdv_full_stack_stress = final_mandel_stress[[0, 1, 2, 5, 3, 4]]
+        sdv_full = np.hstack([[time, dtime], sdv_full_stack_stress, X ])
+        self.full_sdv_storage.append(sdv_full)
+
+        cutting_plane_history = np.array(cutting_plane_history)
+        self.cutting_plane_history.append(cutting_plane_history)
+
         return stress, X, None
