@@ -279,7 +279,8 @@ class ST_GPSR_TTM(Material):
             new_A[3:, 3:] = np.eye(3)*ROOT2 # Like the stuffness matrix, the shear comps are multiplied by ROOT2
             A_in = new_A
 
-
+        iso_part = 1/3*np.sum(trial_T[0:3])
+        trial_T[0:3] = trial_T[0:3] - iso_part
         # Strain transformation matrix
         A_E = np.linalg.inv(C) @ A_in @ C
         e_p_iso_check = np.dot(A_E, e_p_real)
@@ -314,14 +315,6 @@ class ST_GPSR_TTM(Material):
                 yield_F = self.yield_function_mandell(trial_Sigma_f, trial_iso_eqps)
                 #print('Yield F', yield_F, 'Von Mises Stress:', yield_F + Y)
                 dGdSigma = self.dGdSMandell(trial_Sigma_f)
-                # A_S = self.params["B"](trial_iso_eqps)
-                # if A_S.shape == (3,3):
-                #     new_A = np.zeros((6,6))
-                #     new_A[0:3, 0:3] = A_S
-                #     new_A[3:, 3:] = np.eye(3)*ROOT2 # Like the stuffness matrix, the shear comps are multiplied by ROOT2
-                #     A_S = new_A
-                # A_E = np.linalg.inv(C) @ A_S @ C
-                # dGdSigma = A_E @ dGdSigma @ A_S
                 #print('Flow dir: ', flow_direction)
 
                 v_C_r = dGdSigma @ C @ dGdSigma + H*np.linalg.norm(dGdSigma)
@@ -378,12 +371,14 @@ class ST_GPSR_TTM(Material):
         X[self.SDV['FICT_SYZ']] = trial_Sigma_f[3]
         X[self.SDV['FICT_SXZ']] = trial_Sigma_f[4]
         final_mandel_stress = np.dot(B_new, trial_Sigma_f)
+        final_mandel_stress[0:3] = final_mandel_stress[0:3] + iso_part
 
         e_p_real = np.dot(B_E_new, e_p_iso)
         real_eqps =  ROOT2/ROOT3*np.sqrt(e_p_real @ np.transpose(e_p_real))
         X[15] = self.equivalent_stress(final_mandel_stress)
         # Transform mandel stress back to voigt
-        stress = final_mandel_stress
+        stress = final_mandel_stress 
+
         
         #print(stress)
         stress[3:] = stress[3:]/ROOT2
