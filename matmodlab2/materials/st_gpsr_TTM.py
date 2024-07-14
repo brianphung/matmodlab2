@@ -180,6 +180,23 @@ class ST_GPSR_TTM(Material):
         dGdS_array[3:] = dGdS_array[3:]/ROOT2
         return dGdS_array
     
+    def ddGddSMandell(self, mandell_stress_vector):
+        sigma_1, sigma_2, sigma_3, sigma_4, sigma_5, sigma_6 = mandell_stress_vector
+        sigma_4 = sigma_4/ROOT2
+        sigma_5 = sigma_5/ROOT2
+        sigma_6 = sigma_6/ROOT2
+        axial_denom = (4*(sigma_1**2 - sigma_1*sigma_2 - sigma_1*sigma_3 + sigma_2**2 - sigma_2*sigma_3 + sigma_3**2 + 3*sigma_4**2 + 3*sigma_5**2 + 3*sigma_6**2)**(3/2))
+        shear_denom = (6*sigma_4**2 + 6*sigma_5**2 + 6*sigma_6**2 + (sigma_1 - sigma_2)**2 + (sigma_1 - sigma_3)**2 + (sigma_2 - sigma_3)**2)**(3/2)
+        dGds1 = 3*(sigma_2**2 - 2*sigma_2*sigma_3 + sigma_3**2 + 4*sigma_4**2 + 4*sigma_5**2 + 4*sigma_6**2)/axial_denom
+        dGds2 = 3*(sigma_1**2 - 2*sigma_1*sigma_3 + sigma_3**2 + 4*sigma_4**2 + 4*sigma_5**2 + 4*sigma_6**2)/axial_denom
+        dGds3 = 3*(sigma_1**2 - 2*sigma_1*sigma_2 + sigma_2**2 + 4*sigma_4**2 + 4*sigma_5**2 + 4*sigma_6**2)/axial_denom
+        dGds4 = 3*sqrt(2)*(6*sigma_5**2 + 6*sigma_6**2 + (sigma_1 - sigma_2)**2 + (sigma_1 - sigma_3)**2 + (sigma_2 - sigma_3)**2)/shear_denom
+        dGds5 = 3*sqrt(2)*(6*sigma_4**2 + 6*sigma_6**2 + (sigma_1 - sigma_2)**2 + (sigma_1 - sigma_3)**2 + (sigma_2 - sigma_3)**2)/shear_denom
+        dGds6 = 3*sqrt(2)*(6*sigma_4**2 + 6*sigma_5**2 + (sigma_1 - sigma_2)**2 + (sigma_1 - sigma_3)**2 + (sigma_2 - sigma_3)**2)/shear_denom
+        ddGddS_array = np.array([dGds1, dGds2, dGds3, dGds4, dGds5, dGds6])
+        ddGddS_array[3:] = ddGddS_array[3:]/ROOT2
+        return ddGddS_array
+    
     def equivalent_stress(self, mandel_stress_vec):
         # MML stress comes in the following order: 11, 22, 33, 12, 23, 13
         sigma_11, sigma_22, sigma_33, sigma_12, sigma_23, sigma_13 = mandel_stress_vec
@@ -294,6 +311,7 @@ class ST_GPSR_TTM(Material):
         X[self.SDV['TRIAL_STRESS_POST_TRANS_XZ']] = trial_Sigma_f[4]
 
         cutting_plane_history = []
+        dGam_total = 0
 
         if self.yield_function_mandell(trial_Sigma_f, trial_iso_eqps) <= 0:
             pass
@@ -328,6 +346,7 @@ class ST_GPSR_TTM(Material):
                 #print('v_c_r: ', v_C_r)
 
                 dGamma = yield_F / v_C_r
+                dGam_total += dGamma
 
                 delta_e_p = dGamma*dGdSigma
                 e_p_iso = e_p_iso + delta_e_p
@@ -409,4 +428,26 @@ class ST_GPSR_TTM(Material):
         cutting_plane_history = np.array(cutting_plane_history)
         self.cutting_plane_history.append(cutting_plane_history)
 
-        return stress, X, None
+
+        R_fict = self.dGdSMandell(trial_Sigma_f)
+        R_real_star = A_E @ R_fict @ A_new
+        dFdalpha = H
+
+        consistent_tangent_stiffness_H = np.eye(6) + dGam_total * C *self.ddGddSMandell(trial_Sigma_f)
+
+        term1 = consistent_tangent_stiffness_H @ R_fict
+        term2 = R_fict @ consistent_tangent_stiffness_H
+        ddsdde_numerator = np.einsum('i,j',term1, term2)
+        
+        term3 = - dFdalpha * H * np.linalg.norm(R_fict)
+        term4 = R_fict @ consistent_tangent_stiffness_H @ R_fict
+        ddsdde_demoninator = term3 + term4
+
+        ddsdde = consistent_tangent_stiffness_H -  (  1./ddsdde_demoninator * ddsdde_numerator  )
+        ddsdde = B_new @ ddsdde @ A_E_new
+        ddsdde[3:6, 0:3] /= ROOT2
+        ddsdde[0:3, 3:6] /= ROOT2
+
+
+
+        return stress, X, None #ddsdde
