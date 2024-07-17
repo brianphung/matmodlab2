@@ -6,7 +6,7 @@ import numpy as np
 
 def plot_Y_components(set_of_results, components, eqps_to_plot, labels):
     eqps_panda = pd.DataFrame(eqps_to_plot, columns=['REAL_EQPS'])
-    f, ax = plt.subplots()
+    f, ax = plt.subplots(figsize=(4, 4), dpi=300)
     dataset = [ [] for _ in eqps_to_plot  ]
     for mps in set_of_results:
         stress_history = mps.df[['S.XX', 'S.YY', 'S.ZZ', 'REAL_EQPS']]
@@ -37,3 +37,5 @@ def plot_Y_components(set_of_results, components, eqps_to_plot, labels):
     ax.set_xlabel(f'{labels[0]}')
     ax.set_ylabel(f'{labels[1]}')
     ax.set_aspect('equal', adjustable='box')
+
+    return ax
