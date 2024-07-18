@@ -1,6 +1,8 @@
 from numpy import zeros, ix_, sqrt
 import numpy as np
 
+import auto_diff
+
 from ..core.logio import logger
 from ..core.material import Material
 from ..core.tensor import dyad, deviatoric_part, double_dot, magnitude, matrix_rep, array_rep
@@ -25,13 +27,19 @@ class ST_GPSR_TTM(Material):
             unused = ", ".join(parameters.keys())
             logger.warning("Unused parameters: {0}".format(unused))
 
+        self.P_vm = np.array([[1, -0.5, -0.5, 0, 0, 0],
+                     [-0.5, 1, -0.5, 0, 0, 0],
+                     [-0.5, -0.5, 1, 0, 0, 0],
+                     [0, 0, 0, 3, 0, 0],
+                     [0, 0, 0, 0, 3, 0],
+                     [0, 0, 0, 0, 0, 3]])
 
         # Check inputs
         E = self.params["E"]
         Nu = self.params["Nu"]
         Y0 = self.params["Y0"]
         A = self.params["A_mapping"]
-        H = self.params["H"]
+
         errors = 0
         if E <= 0.0:
             errors += 1
@@ -44,13 +52,6 @@ class ST_GPSR_TTM(Material):
             logger.error("Poisson's ratio < -1.")
         if Nu < 0.0:
             logger.warning("#---- WARNING: negative Poisson's ratio")
-        if Y0 < 0:
-            errors += 1
-            logger.error("Yield strength must be positive")
-        if Y0 < 1e-12:
-            # zero strength -> assume the user wants elasticity
-            logger.warning("Zero strength detected, setting it to a larg number")
-            self.params["Y0"] = 1e60
         if callable(A) == False:
             errors += 1
             logger.error("No mapping matrix as function.")
@@ -167,6 +168,7 @@ class ST_GPSR_TTM(Material):
     #     return matrix_rep(dGdS_array, 0)
     
     def dGdSMandell(self, mandell_stress_vector):
+        raise NotImplementedError
         sigma_1, sigma_2, sigma_3, sigma_4, sigma_5, sigma_6 = mandell_stress_vector
         sigma_4 = sigma_4/ROOT2
         sigma_5 = sigma_5/ROOT2
@@ -183,6 +185,7 @@ class ST_GPSR_TTM(Material):
         return dGdS_array
     
     def ddGddSMandell(self, mandell_stress_vector):
+        raise NotImplementedError
         sigma_1, sigma_2, sigma_3, sigma_4, sigma_5, sigma_6 = mandell_stress_vector
         sigma_4 = sigma_4/ROOT2
         sigma_5 = sigma_5/ROOT2
@@ -201,6 +204,7 @@ class ST_GPSR_TTM(Material):
     
     def equivalent_stress(self, mandel_stress_vec):
         # MML stress comes in the following order: 11, 22, 33, 12, 23, 13
+        raise NotImplementedError
         sigma_11, sigma_22, sigma_33, sigma_12, sigma_23, sigma_13 = mandel_stress_vec
         sigma_12 = sigma_12/ROOT2
         sigma_23 = sigma_23/ROOT2
@@ -210,11 +214,13 @@ class ST_GPSR_TTM(Material):
         return vm
     
     def yield_function_mandell(self, mandel_stress_vec, eqps ):
-        Y = self.params["Y0"]
-        H = self.params["H"]
-        Y_K = Y + H*eqps
-        vm = self.equivalent_stress(mandel_stress_vec)
-        return vm - Y_K
+        if not np.isscalar(eqps):
+            eqps = eqps[0][0]
+        
+        A = self.params["A_mapping"](eqps) 
+        #print(A)
+        G = np.transpose(mandel_stress_vec) @ ( np.transpose(A) @ self.P_vm @ A ) @ mandel_stress_vec
+        return G - 1
 
     def eval(self, time, dtime, temp, dtemp, F0, F, stran_V, d_V, stress_V, X, **kwargs):
         # First, we'll convert everything into mandel notation
@@ -230,20 +236,9 @@ class ST_GPSR_TTM(Material):
         #print('delta_strain after', delta_strain)
         e_p_real = np.array([X[ss] for ss in range(7,13)]) # e_p will also be in voigt notation
         e_p_real[3:] = ROOT2/2.*e_p_real[3:]
-        e_p_iso = np.array([X[ss] for ss in range(0,6)]) # e_p will also be in voigt notation
-        e_p_iso[3:] = ROOT2/2.*e_p_iso[3:]
-        # From here, we're working in a Mandell basis
-        X[self.SDV['MML_STRESS_GUESS_XX']] = stress_V[0]
-        X[self.SDV['MML_STRESS_GUESS_YY']] = stress_V[1]
-        X[self.SDV['MML_STRESS_GUESS_ZZ']] = stress_V[2]
-        X[self.SDV['MML_STRESS_GUESS_XY']] = stress_V[3]
-        X[self.SDV['MML_STRESS_GUESS_YZ']] = stress_V[4]
-        X[self.SDV['MML_STRESS_GUESS_XZ']] = stress_V[5]
 
-        Y = self.params["Y0"]
         E = self.params["E"]
         Nu = self.params["Nu"]
-        H = self.params["H"]
 
         # Get the bulk, shear, and Lame constants
         K = E / 3.0 / (1.0 - 2.0 * Nu)
@@ -261,137 +256,47 @@ class ST_GPSR_TTM(Material):
         C[3:6, 0:3] *= ROOT2
         C[0:3, 3:6] *= ROOT2
 
-        # Evaluate predicted stress in the spatial basis
-
-        
-
         # Calculate a trial stress
-        #print(delta_strain)
-        X[self.SDV['DELTA_EXX']] = delta_strain[0]*dtime
-        X[self.SDV['DELTA_EYY']] = delta_strain[1]*dtime
-        X[self.SDV['DELTA_EZZ']] = delta_strain[2]*dtime
-        X[self.SDV['DELTA_EXY']] = delta_strain[5]*dtime
-        X[self.SDV['DELTA_EYZ']] = delta_strain[3]*dtime
-        X[self.SDV['DELTA_EXZ']] = delta_strain[4]*dtime
         delta_stress = np.dot(C, delta_strain*dtime)
-        trial_T = stress + np.dot(C, delta_strain*dtime)#np.dot(C, strain - e_p_real)
-        X[self.SDV['DELTA_SXX']] = delta_stress[0]
-        X[self.SDV['DELTA_SYY']] = delta_stress[1]
-        X[self.SDV['DELTA_SZZ']] = delta_stress[2]
-        X[self.SDV['DELTA_SXY']] = delta_stress[5]
-        X[self.SDV['DELTA_SYZ']] = delta_stress[3]
-        X[self.SDV['DELTA_SXZ']] = delta_stress[4]
-        X[self.SDV['TRIAL_STRESS_PRE_TRANS_XX']] = trial_T[0]
-        X[self.SDV['TRIAL_STRESS_PRE_TRANS_YY']] = trial_T[1]
-        X[self.SDV['TRIAL_STRESS_PRE_TRANS_ZZ']] = trial_T[2]
-        X[self.SDV['TRIAL_STRESS_PRE_TRANS_XY']] = trial_T[5]
-        X[self.SDV['TRIAL_STRESS_PRE_TRANS_YZ']] = trial_T[3]
-        X[self.SDV['TRIAL_STRESS_PRE_TRANS_XZ']] = trial_T[4]
-        trial_iso_eqps = X[6]
-        trial_real_eqps = X[13]
-        """ For now, force A to be the idenity """
-
-        X[self.SDV['FICT_EQPS_INPUT']] = trial_iso_eqps
-        A_in = self.params["A_mapping"](trial_real_eqps, trial_iso_eqps)
-        if A_in.shape == (3,3):
-            new_A = np.zeros((6,6))
-            new_A[0:3, 0:3] = A_in
-            new_A[3:, 3:] = np.eye(3)*ROOT2 # Like the stuffness matrix, the shear comps are multiplied by ROOT2
-            A_in = new_A
-
-
-        # Strain transformation matrix
-        A_E = np.linalg.inv(C) @ A_in @ C
-        e_p_iso_check = np.dot(A_E, e_p_real)
-        #assert(abs(np.linalg.norm(e_p_iso_check) - np.linalg.norm(e_p_iso)) < TOLER)
-        trial_Sigma_f = np.dot(A_in, trial_T)
-        iso_strain = np.dot(A_E, strain)
-        X[self.SDV['TRIAL_STRESS_POST_TRANS_XX']] = trial_Sigma_f[0]
-        X[self.SDV['TRIAL_STRESS_POST_TRANS_YY']] = trial_Sigma_f[1]
-        X[self.SDV['TRIAL_STRESS_POST_TRANS_ZZ']] = trial_Sigma_f[2]
-        X[self.SDV['TRIAL_STRESS_POST_TRANS_XY']] = trial_Sigma_f[5]
-        X[self.SDV['TRIAL_STRESS_POST_TRANS_YZ']] = trial_Sigma_f[3]
-        X[self.SDV['TRIAL_STRESS_POST_TRANS_XZ']] = trial_Sigma_f[4]
-
-        cutting_plane_history = []
-        dGam_total = 0
+        trial_T = stress + delta_stress
 
         delta_e_p = np.array([0,0,0,0,0,0], dtype=float)
 
-        if self.yield_function_mandell(trial_Sigma_f, trial_iso_eqps) <= 0:
+        trial_real_eqps = X[13]
+
+        trial_Sigma_f = trial_T
+
+        if self.yield_function_mandell(trial_Sigma_f, trial_real_eqps) <= 0:
             pass
         else:
             for j in range(1000):
-                #print(f'---------- BEGIN J {j} ----------')
-                #print(f'Pre trial: {trial_Sigma_f}')
-                
-                
-                #trial_Sigma_f = trial_Sigma_f - np.dot(C, e_p) # We cut the strain because elastic isotropy and principal stresses
-                #print(f'New trial: {trial_Sigma_f}')
-                #print(f'from E_p:', e_p)
-                trial_Sigma_f -= np.dot(C, delta_e_p)
-
-                
+                #print(f'iter {j}')
+                #print(strain.shape, e_p_real.shape)
+                trial_Sigma_f = trial_Sigma_f - np.dot(C, delta_e_p)
 
                 # Calculate the yield function
-                yield_F = self.yield_function_mandell(trial_Sigma_f, trial_iso_eqps)
+                # yield_F = self.yield_function_mandell(trial_Sigma_f, trial_real_eqps)
                 #print('Yield F', yield_F, 'Von Mises Stress:', yield_F + Y)
-                dGdSigma = self.dGdSMandell(trial_Sigma_f)
-                # A_S = self.params["B"](trial_iso_eqps)
-                # if A_S.shape == (3,3):
-                #     new_A = np.zeros((6,6))
-                #     new_A[0:3, 0:3] = A_S
-                #     new_A[3:, 3:] = np.eye(3)*ROOT2 # Like the stuffness matrix, the shear comps are multiplied by ROOT2
-                #     A_S = new_A
-                # A_E = np.linalg.inv(C) @ A_S @ C
-                # dGdSigma = A_E @ dGdSigma @ A_S
-                #print('Flow dir: ', flow_direction)
+                x = np.array([trial_Sigma_f]).T
+                y = np.array([[trial_real_eqps]]).T
+                with auto_diff.AutoDiff(x, y) as (x,y):
+                    f_eval = self.yield_function_mandell(x, trial_real_eqps)
+                    yield_F, (dGdSigma, H) = auto_diff.get_value_and_jacobians(f_eval)
+                dGdSigma = np.transpose(dGdSigma[0])
+                yield_F = yield_F[0][0]
+                #print('dGdSigma', dGdSigma, dGdSigma.shape)
+                H = H[0][0]
+                print('H', H)
 
                 v_C_r = dGdSigma @ C @ dGdSigma + H*np.linalg.norm(dGdSigma)
                 #print('v_c_r: ', v_C_r)
 
                 dGamma = yield_F / v_C_r
-                dGam_total += dGamma
-
-                delta_e_p = dGamma*  A_E @ dGdSigma @ A_in 
-                e_p_iso = e_p_iso + delta_e_p
-                trial_iso_eqps += dGamma*H*np.linalg.norm(dGdSigma) # ROOT2/ROOT3*np.sqrt(e_p_iso @ np.transpose(e_p_iso))
-
-                # Now you need to update A_E and A_in
-                def objective_function(real_eqps_guess):
-                    B_new = self.params["B_mapping"](real_eqps_guess, trial_iso_eqps)
-                    A_new = self.params["A_mapping"](real_eqps_guess, trial_iso_eqps)
-                    if A_new.shape == (3,3):
-                        new_A = np.zeros((6,6))
-                        new_A[0:3, 0:3] = A_new
-                        new_A[3:, 3:] = np.eye(3)#*ROOT2 # Like the stuffness matrix, the shear comps are multiplied by ROOT2
-                        A_new = new_A
-                    if B_new.shape == (3,3):
-                        new_B = np.zeros((6,6))
-                        new_B[0:3, 0:3] = B_new
-                        new_B[3:, 3:] = np.eye(3)#*ROOT2 # Like the stuffness matrix, the shear comps are multiplied by ROOT2
-                        B_new = new_B
-                    B_E_new = np.linalg.inv(np.linalg.inv(C) @ A_new @ C)
-                    error = trial_Sigma_f - A_new @ C @ (strain - B_E_new @ e_p_iso)
-                    return error
-                #print('eqps error', objective_function(trial_real_eqps), 'origianl_eqps', trial_real_eqps)
-                results = optimize.root(objective_function, x0=trial_real_eqps, method='lm')
-                trial_real_eqps = results.x[0]
-
-                A_in = self.params["A_mapping"](trial_real_eqps, trial_iso_eqps)
-                if A_in.shape == (3,3):
-                    new_A = np.zeros((6,6))
-                    new_A[0:3, 0:3] = A_in
-                    new_A[3:, 3:] = np.eye(3)*ROOT2 # Like the stuffness matrix, the shear comps are multiplied by ROOT2
-                    A_in = new_A
-                A_E = np.linalg.inv(C) @ A_in @ C
-
-                #print('Delta E_p: ', dGamma)
-                #e_p = e_p + delta_e_p
-                #print('New E_p: ', e_p)
-
-                local_cpa_variables = np.hstack([trial_Sigma_f, [yield_F], dGdSigma, dGdSigma @ C @ dGdSigma, [dGamma], delta_e_p, e_p_iso, [trial_iso_eqps] ])
-                cutting_plane_history.append(local_cpa_variables)
+                #print('dGamma', dGamma)
+                delta_e_p = dGamma* dGdSigma
+                #print(delta_e_p)
+                e_p_real = e_p_real + delta_e_p
+                trial_real_eqps +=  ROOT2/ROOT3*np.sqrt(delta_e_p @ np.transpose(delta_e_p))
                 
                 if abs(dGamma) <= TOLER:
                     break
@@ -400,27 +305,6 @@ class ST_GPSR_TTM(Material):
                 #     raise RuntimeError('Shouldnt he here')
             else:
                 raise RuntimeError("Newton iterations failed to converge")
-            
-
-        def objective_function(real_eqps_guess):
-            B_new = self.params["B_mapping"](real_eqps_guess, trial_iso_eqps)
-            A_new = self.params["A_mapping"](real_eqps_guess, trial_iso_eqps)
-            if A_new.shape == (3,3):
-                new_A = np.zeros((6,6))
-                new_A[0:3, 0:3] = A_new
-                new_A[3:, 3:] = np.eye(3)#*ROOT2 # Like the stuffness matrix, the shear comps are multiplied by ROOT2
-                A_new = new_A
-            if B_new.shape == (3,3):
-                new_B = np.zeros((6,6))
-                new_B[0:3, 0:3] = B_new
-                new_B[3:, 3:] = np.eye(3)#*ROOT2 # Like the stuffness matrix, the shear comps are multiplied by ROOT2
-                B_new = new_B
-            B_E_new = np.linalg.inv(np.linalg.inv(C) @ A_new @ C)
-            error = trial_Sigma_f - A_new @ C @ (strain - B_E_new @ e_p_iso)
-            return error
-        #print('eqps error', objective_function(trial_real_eqps), 'origianl_eqps', trial_real_eqps)
-        results = optimize.root(objective_function, x0=trial_real_eqps, method='lm', tol=1e-16, options={"ftol": 1e-7, "gtol": 1e-16, "maxiter": 100000})
-        trial_real_eqps = results.x[0]
         #print('new eqps', trial_real_eqps)
         #e_p = e_p + delta_e_p
         #trial_Sigma_f = trial_Sigma_f - np.dot(C, e_p) # We cut the strain because elastic isotropy and principal stresses
@@ -431,19 +315,6 @@ class ST_GPSR_TTM(Material):
         X[self.SDV['CONV_STRESS_ISO_YZ']] = trial_Sigma_f[3]
         X[self.SDV['CONV_STRESS_ISO_XZ']] = trial_Sigma_f[4]
         """ Temporary hide """
-        # transform the stress back to real space
-        A_new = self.params["A_mapping"](trial_real_eqps, trial_iso_eqps)
-        if A_new.shape == (3,3):
-            new_A = np.zeros((6,6))
-            new_A[0:3, 0:3] = A_new
-            new_A[3:, 3:] = np.eye(3)#*ROOT2 # Like the stuffness matrix, the shear comps are multiplied by ROOT2
-            A_new = new_A
-        A_E_new = np.linalg.inv(C) @ A_new @ C
-        #print(A_new - A_E_new)
-        
-        B_new = np.linalg.inv(A_new)
-        #print(B_new)
-        B_E_new = np.linalg.inv(A_E_new)
 
         #trial_Sigma_f = np.dot(C, iso_strain - e_p_iso)
         X[self.SDV['FICT_SXX']] = trial_Sigma_f[0]
@@ -452,11 +323,10 @@ class ST_GPSR_TTM(Material):
         X[self.SDV['FICT_SXY']] = trial_Sigma_f[5]
         X[self.SDV['FICT_SYZ']] = trial_Sigma_f[3]
         X[self.SDV['FICT_SXZ']] = trial_Sigma_f[4]
-        final_mandel_stress = np.dot(B_new, trial_Sigma_f)
+        final_mandel_stress =  trial_Sigma_f
 
-        e_p_real = np.dot(B_E_new, e_p_iso)
-        real_eqps =  ROOT2/ROOT3*np.sqrt(e_p_real @ np.transpose(e_p_real))
-        X[15] = self.equivalent_stress(final_mandel_stress)
+        real_eqps =  trial_real_eqps
+        #X[15] = self.equivalent_stress(final_mandel_stress)
         # Transform mandel stress back to voigt
         stress = final_mandel_stress
         
@@ -469,26 +339,23 @@ class ST_GPSR_TTM(Material):
         e_p_real = np.array([ e_p_real[i] for i in [0, 1, 2, 5, 3, 4] ])
         X[7:10] = e_p_real[:3]
         X[10:13] = e_p_real[3:6]/ROOT2*2
-        e_p_iso = np.array([ e_p_iso[i] for i in [0, 1, 2, 5, 3, 4] ])
-        X[:3] = e_p_iso[:3]
-        X[3:6] = e_p_iso[3:6]/ROOT2*2
 
-        X[6] = trial_iso_eqps #+= ROOT2/3.*np.sqrt( (Epp[0] - Epp[1])**2 + (Epp[1] - Epp[2])**2 + (Epp[2] - Epp[0])**2 )
+        #X[6] = trial_iso_eqps #+= ROOT2/3.*np.sqrt( (Epp[0] - Epp[1])**2 + (Epp[1] - Epp[2])**2 + (Epp[2] - Epp[0])**2 )
         X[13] = real_eqps
-        X[14] = Y + trial_iso_eqps*H
+        #X[14] = Y + trial_iso_eqps*H
 
         sdv_full_stack_stress = final_mandel_stress[[0, 1, 2, 5, 3, 4]]
         sdv_full = np.hstack([[time, dtime], sdv_full_stack_stress, X ])
         self.full_sdv_storage.append(sdv_full)
 
-        cutting_plane_history = np.array(cutting_plane_history)
-        self.cutting_plane_history.append(cutting_plane_history)
+        #cutting_plane_history = np.array(cutting_plane_history)
+        #self.cutting_plane_history.append(cutting_plane_history)
 
 
-        R_fict = self.dGdSMandell(trial_Sigma_f)
-        R_real_star = A_E @ R_fict @ A_new
-        dFdalpha = H
-
+        #R_fict = self.dGdSMandell(trial_Sigma_f)
+        
+        #dFdalpha = H
+        """
         consistent_tangent_stiffness_H = np.eye(6) + dGam_total * C *self.ddGddSMandell(trial_Sigma_f)
 
         term1 = consistent_tangent_stiffness_H @ R_fict
@@ -503,7 +370,7 @@ class ST_GPSR_TTM(Material):
         ddsdde = B_new @ ddsdde @ A_E_new
         ddsdde[3:6, 0:3] /= ROOT2
         ddsdde[0:3, 3:6] /= ROOT2
-
+        """
 
 
         return stress, X, None #ddsdde
