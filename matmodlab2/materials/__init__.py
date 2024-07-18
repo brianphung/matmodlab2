@@ -11,7 +11,8 @@ from .mooney_rivlin import MooneyRivlinMaterial
 from .tresca import TrescaMaterial
 from .neohooke import NeoHookeMaterial
 from .st_gpsr_TTM import ST_GPSR_TTM
-from .cutting_plane import CPAPlasticity
+from .st_gpsr_TTM_iso_map import ST_GPSR_TTM_ISO
+from .hill import Hill
 
 
 __all__ = [
@@ -28,5 +29,6 @@ __all__ = [
     "NeoHookeMaterial",
     "TrescaMaterial",
     "ST_GPSR_TTM",
-    "CPAPlasticity"
+    "ST_GPSR_TTM_ISO",
+    "Hill"
 ]

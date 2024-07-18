@@ -12,7 +12,7 @@ ROOT3, ROOT2 = sqrt(3.0), sqrt(2.0)
 ROOT23 = np.sqrt(2.0 / 3.0)
 ONEHALF = 0.5
 
-class ST_GPSR_TTM(Material):
+class ST_GPSR_TTM_ISO(Material):
     name = "st-gpsr-ttm"
 
     def __init__(self, **parameters):

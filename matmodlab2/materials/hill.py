@@ -14,12 +14,12 @@ ROOT3, ROOT2 = sqrt(3.0), sqrt(2.0)
 ROOT23 = np.sqrt(2.0 / 3.0)
 ONEHALF = 0.5
 
-class ST_GPSR_TTM(Material):
-    name = "st-gpsr-ttm"
+class Hill(Material):
+    name = "PrincipalHill"
 
     def __init__(self, **parameters):
         """Set up the Plastic material"""
-        param_names = ["E", "Nu", "Y0", "H", "A_mapping", "B_mapping"]
+        param_names = ["E", "Nu", "Y0", "F", "G", "H"]
         self.params = {}
         for (i, name) in enumerate(param_names):
             self.params[name] = parameters.pop(name, 0.0)
@@ -27,18 +27,10 @@ class ST_GPSR_TTM(Material):
             unused = ", ".join(parameters.keys())
             logger.warning("Unused parameters: {0}".format(unused))
 
-        self.P_vm = np.array([[1, -0.5, -0.5, 0, 0, 0],
-                     [-0.5, 1, -0.5, 0, 0, 0],
-                     [-0.5, -0.5, 1, 0, 0, 0],
-                     [0, 0, 0, 3, 0, 0],
-                     [0, 0, 0, 0, 3, 0],
-                     [0, 0, 0, 0, 0, 3]])
-
         # Check inputs
         E = self.params["E"]
         Nu = self.params["Nu"]
         Y0 = self.params["Y0"]
-        A = self.params["A_mapping"]
 
         errors = 0
         if E <= 0.0:
@@ -52,9 +44,6 @@ class ST_GPSR_TTM(Material):
             logger.error("Poisson's ratio < -1.")
         if Nu < 0.0:
             logger.warning("#---- WARNING: negative Poisson's ratio")
-        if callable(A) == False:
-            errors += 1
-            logger.error("No mapping matrix as function.")
         if errors:
             raise ValueError("stopping due to previous errors")
 
@@ -151,22 +140,6 @@ class ST_GPSR_TTM(Material):
         values[7:13] = 1e-32
         return values
 
-    # def apply_some_mapping_to_stress_vector(self, A_tensor, S_vector):
-    #     S_tensor = matrix_rep(S_vector,0)
-    #     rot_tensor = np.tensordot(A_tensor, S_tensor)
-    #     return array_rep(rot_tensor, (6,))
-    
-    # def dGdS(self, pk2_stress):
-    #     sigma_1, sigma_2, sigma_3, sigma_4, sigma_5, sigma_6 = array_rep(pk2_stress, (6,))
-    #     denom = sqrt(6*sigma_4**2 + 6*sigma_5**2 + 6*sigma_6**2 + (sigma_1 - sigma_2)**2 + (sigma_1 - sigma_3)**2 + (sigma_2 - sigma_3)**2)
-    #     dGds1 = ROOT2*(2*sigma_1 - sigma_2 - sigma_3)/(2*denom)
-    #     dGds2 = ROOT2*(-sigma_1 + 2*sigma_2 - sigma_3)/(2*denom)
-    #     dGds3 = ROOT2*(-sigma_1 - sigma_2 + 2*sigma_3)/(2*denom)
-    #     dGds4 = 3*ROOT2*sigma_4/denom
-    #     dGds5 = 3*ROOT2*sigma_5/denom
-    #     dGds6 = 3*ROOT2*sigma_6/denom
-    #     dGdS_array = np.array([dGds1, dGds2, dGds3, dGds4, dGds5, dGds6])
-    #     return matrix_rep(dGdS_array, 0)
     
     def dGdSMandell(self, mandell_stress_vector):
         raise NotImplementedError
@@ -205,12 +178,17 @@ class ST_GPSR_TTM(Material):
     
     def equivalent_stress(self, mandel_stress_vec):
         # MML stress comes in the following order: 11, 22, 33, 12, 23, 13
-        raise NotImplementedError
         sigma_11, sigma_22, sigma_33, sigma_12, sigma_23, sigma_13 = mandel_stress_vec
         sigma_12 = sigma_12/ROOT2
         sigma_23 = sigma_23/ROOT2
         sigma_13 = sigma_13/ROOT2
-        internal = (sigma_11 - sigma_22)**2 + (sigma_22 - sigma_33)**2 + (sigma_33 - sigma_11)**2 + 3*(sigma_23**2 + sigma_13**2 + sigma_12**2)
+        Hh = self.params["H"]
+        Fh = self.params["F"]
+        Gh = self.params["G"]
+        Lh = 1
+        Mh = 1
+        Nh = 1
+        internal = Hh*(sigma_11 - sigma_22)**2 + Fh*(sigma_22 - sigma_33)**2 + Gh*(sigma_33 - sigma_11)**2 + 2*(Lh*sigma_23**2 + Mh*sigma_13**2 + Nh*sigma_12**2)
         vm = np.sqrt(0.5*internal)
         return vm
     
@@ -220,11 +198,9 @@ class ST_GPSR_TTM(Material):
 
         e_p_strain_vec = e_p_strain_vec.T
         eqps = ROOT2/ROOT3*np.sqrt(e_p_strain_vec @ np.transpose(e_p_strain_vec))
-        #print('eqps in', eqps)
-        A = self.params["A_mapping"](eqps) 
-        #print(A)
-        G = np.transpose(mandel_stress_vec) @ ( np.transpose(A) @ self.P_vm @ A ) @ mandel_stress_vec
-        return G - 1
+        eq_stress = self.equivalent_stress(mandel_stress_vec)
+        Y0 = 13.6208515706149 + 69.9208533115855*eqps
+        return eq_stress - Y0
 
     def eval(self, time, dtime, temp, dtemp, F0, F, stran_V, d_V, stress_V, X, **kwargs):
         # First, we'll convert everything into mandel notation
@@ -313,21 +289,9 @@ class ST_GPSR_TTM(Material):
         #print('new eqps', trial_real_eqps)
         #e_p = e_p + delta_e_p
         #trial_Sigma_f = trial_Sigma_f - np.dot(C, e_p) # We cut the strain because elastic isotropy and principal stresses
-        X[self.SDV['CONV_STRESS_ISO_XX']] = trial_Sigma_f[0]
-        X[self.SDV['CONV_STRESS_ISO_YY']] = trial_Sigma_f[1]
-        X[self.SDV['CONV_STRESS_ISO_ZZ']] = trial_Sigma_f[2]
-        X[self.SDV['CONV_STRESS_ISO_XY']] = trial_Sigma_f[5]
-        X[self.SDV['CONV_STRESS_ISO_YZ']] = trial_Sigma_f[3]
-        X[self.SDV['CONV_STRESS_ISO_XZ']] = trial_Sigma_f[4]
         """ Temporary hide """
 
         #trial_Sigma_f = np.dot(C, iso_strain - e_p_iso)
-        X[self.SDV['FICT_SXX']] = trial_Sigma_f[0]
-        X[self.SDV['FICT_SYY']] = trial_Sigma_f[1]
-        X[self.SDV['FICT_SZZ']] = trial_Sigma_f[2]
-        X[self.SDV['FICT_SXY']] = trial_Sigma_f[5]
-        X[self.SDV['FICT_SYZ']] = trial_Sigma_f[3]
-        X[self.SDV['FICT_SXZ']] = trial_Sigma_f[4]
         final_mandel_stress =  trial_Sigma_f
 
         real_eqps =  trial_real_eqps
@@ -348,10 +312,6 @@ class ST_GPSR_TTM(Material):
         #X[6] = trial_iso_eqps #+= ROOT2/3.*np.sqrt( (Epp[0] - Epp[1])**2 + (Epp[1] - Epp[2])**2 + (Epp[2] - Epp[0])**2 )
         X[13] = real_eqps
         #X[14] = Y + trial_iso_eqps*H
-
-        sdv_full_stack_stress = final_mandel_stress[[0, 1, 2, 5, 3, 4]]
-        sdv_full = np.hstack([[time, dtime], sdv_full_stack_stress, X ])
-        self.full_sdv_storage.append(sdv_full)
 
         #cutting_plane_history = np.array(cutting_plane_history)
         #self.cutting_plane_history.append(cutting_plane_history)

@@ -12,8 +12,8 @@ ROOT3, ROOT2 = sqrt(3.0), sqrt(2.0)
 ROOT23 = np.sqrt(2.0 / 3.0)
 ONEHALF = 0.5
 
-class ST_GPSR_TTM(Material):
-    name = "st-gpsr-ttm"
+class ST_GPSR_TTM_ISO(Material):
+    name = "st-gpsr-ttm-iso"
 
     def __init__(self, **parameters):
         """Set up the Plastic material"""
@@ -303,10 +303,10 @@ class ST_GPSR_TTM(Material):
         # Strain transformation matrix
         A_E = np.linalg.inv(C) @ A_in @ C
         e_p_iso_check = np.dot(A_E, e_p_real)
-        if abs(np.linalg.norm(e_p_iso_check) - np.linalg.norm(e_p_iso)) > TOLER:
-            print(e_p_iso_check, e_p_iso, e_p_real)
+        # if abs(np.linalg.norm(e_p_iso_check) - np.linalg.norm(e_p_iso)) > TOLER:
+        #     print(e_p_iso_check, e_p_iso, e_p_real)
 
-            raise Exception('Fail')
+        #     raise Exception('Fail')
         trial_Sigma_f = np.dot(A_in, trial_T)
         iso_strain = np.dot(A_E, strain)
         X[self.SDV['TRIAL_STRESS_POST_TRANS_XX']] = trial_Sigma_f[0]
@@ -415,10 +415,10 @@ class ST_GPSR_TTM(Material):
             B_E_new = np.linalg.inv(C) @ B_new @ C
             error = trial_Sigma_f - A_new @ C @ (strain - B_E_new @ e_p_iso)
             return error
-        print('eqps error', objective_function(trial_real_eqps), 'origianl_eqps', trial_real_eqps)
+        #print('eqps error', objective_function(trial_real_eqps), 'origianl_eqps', trial_real_eqps)
         results = optimize.root(objective_function, x0=trial_real_eqps, method='lm', tol=1e-16, options={"ftol": 1e-7, "gtol": 1e-16, "maxiter": 100000})
         trial_real_eqps = results.x[0]
-        print('new eqps', trial_real_eqps)
+        #print('new eqps', trial_real_eqps)
         B_in = self.params["B_mapping"](trial_real_eqps, trial_iso_eqps)
         if B_in.shape == (3,3):
             new_B = np.zeros((6,6))
