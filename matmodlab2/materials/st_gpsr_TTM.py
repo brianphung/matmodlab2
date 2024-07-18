@@ -148,6 +148,7 @@ class ST_GPSR_TTM(Material):
         values = np.array([ 0.0 for i in range(self.num_sdv)])
         # Hard coded Y0
         values[14] = self.params["Y0"]
+        values[7:13] = 1e-32
         return values
 
     # def apply_some_mapping_to_stress_vector(self, A_tensor, S_vector):
@@ -213,10 +214,13 @@ class ST_GPSR_TTM(Material):
         vm = np.sqrt(0.5*internal)
         return vm
     
-    def yield_function_mandell(self, mandel_stress_vec, eqps ):
-        if not np.isscalar(eqps):
-            eqps = eqps[0][0]
-        
+    def yield_function_mandell(self, mandel_stress_vec, e_p_strain_vec ):
+        # if not np.isscalar(eqps):
+        #     eqps = eqps[0][0]
+
+        e_p_strain_vec = e_p_strain_vec.T
+        eqps = ROOT2/ROOT3*np.sqrt(e_p_strain_vec @ np.transpose(e_p_strain_vec))
+        #print('eqps in', eqps)
         A = self.params["A_mapping"](eqps) 
         #print(A)
         G = np.transpose(mandel_stress_vec) @ ( np.transpose(A) @ self.P_vm @ A ) @ mandel_stress_vec
@@ -266,7 +270,7 @@ class ST_GPSR_TTM(Material):
 
         trial_Sigma_f = trial_T
 
-        if self.yield_function_mandell(trial_Sigma_f, trial_real_eqps) <= 0:
+        if self.yield_function_mandell(trial_Sigma_f, e_p_real) <= 0:
             pass
         else:
             for j in range(1000):
@@ -278,17 +282,18 @@ class ST_GPSR_TTM(Material):
                 # yield_F = self.yield_function_mandell(trial_Sigma_f, trial_real_eqps)
                 #print('Yield F', yield_F, 'Von Mises Stress:', yield_F + Y)
                 x = np.array([trial_Sigma_f]).T
-                y = np.array([[trial_real_eqps]]).T
+                y = np.array([e_p_real]).T
+                #print('x,y autodiff', x, y)
                 with auto_diff.AutoDiff(x, y) as (x,y):
-                    f_eval = self.yield_function_mandell(x, trial_real_eqps)
+                    f_eval = self.yield_function_mandell(x, y)
                     yield_F, (dGdSigma, H) = auto_diff.get_value_and_jacobians(f_eval)
                 dGdSigma = np.transpose(dGdSigma[0])
                 yield_F = yield_F[0][0]
                 #print('dGdSigma', dGdSigma, dGdSigma.shape)
-                H = H[0][0]
-                print('H', H)
+                H = np.transpose(H[0])
+                #print('H', H)
 
-                v_C_r = dGdSigma @ C @ dGdSigma + H*np.linalg.norm(dGdSigma)
+                v_C_r = dGdSigma @ C @ dGdSigma + H @ dGdSigma
                 #print('v_c_r: ', v_C_r)
 
                 dGamma = yield_F / v_C_r
@@ -296,7 +301,7 @@ class ST_GPSR_TTM(Material):
                 delta_e_p = dGamma* dGdSigma
                 #print(delta_e_p)
                 e_p_real = e_p_real + delta_e_p
-                trial_real_eqps +=  ROOT2/ROOT3*np.sqrt(delta_e_p @ np.transpose(delta_e_p))
+                trial_real_eqps =  ROOT2/ROOT3*np.sqrt(e_p_real @ np.transpose(e_p_real))
                 
                 if abs(dGamma) <= TOLER:
                     break
