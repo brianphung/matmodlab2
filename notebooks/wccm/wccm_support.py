@@ -34,7 +34,7 @@ def plot_Y_components(set_of_results, components, eqps_to_plot, labels, legend=F
         SXX = np_interpolate(eqps_to_plot, stress_history, 'REAL_EQPS', 'S.XX')
         SYY = np_interpolate(eqps_to_plot, stress_history, 'REAL_EQPS', 'S.YY')
         SZZ = np_interpolate(eqps_to_plot, stress_history, 'REAL_EQPS', 'S.ZZ')
-        print(eqps_to_plot, SXX, SYY, SZZ)
+        #print(eqps_to_plot, SXX, SYY, SZZ)
 
         for _, eqps in enumerate(eqps_to_plot):
             #print(_)
