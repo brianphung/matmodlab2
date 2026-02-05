@@ -16,3 +16,4 @@ __pycache__
 __pycache__/*
 tests/.cache
 *.DS_Store
+*.pkl
